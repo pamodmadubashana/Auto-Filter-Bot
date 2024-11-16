@@ -3,41 +3,53 @@ import time
 import asyncio
 import uvloop
 
-# pyrogram imports
 from pyrogram import types
-from pyrogram import Client
+from pyrogram import Client 
 from pyrogram.errors import FloodWait
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# aiohttp imports
 from aiohttp import web
 from typing import Union, Optional, AsyncGenerator
 
-# local imports
 from web import web_app
-from info import LOG_CHANNEL, API_ID, API_HASH, BOT_TOKEN, PORT, BIN_CHANNEL, ADMINS, DATABASE_URL
 from utils import temp, get_readable_time
+from info import LOG_CHANNEL, API_ID, API_HASH, BOT_TOKEN, PORT, BIN_CHANNEL, ADMINS, DATABASE_URL  
 
-# pymongo and database imports
 from database.users_chats_db import db
 from database.ia_filterdb import Media
-from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+from pymongo.mongo_client import MongoClient
 
 uvloop.install()
+def clear_terminal():
+    if os.name == 'nt':
+        os.system('cls')
+    else: 
+        os.system('clear')
 
 class Bot(Client):
     def __init__(self):
-        super().__init__(
-            name='Auto_Filter_Bot',
+        self._bot = Client(
+            name='bot',
             api_id=API_ID,
             api_hash=API_HASH,
             bot_token=BOT_TOKEN,
             plugins={"root": "plugins"}
         )
-
+    async def create_user_clients(self):
+        self._user = Client(
+            name='user',
+            api_id=API_ID,
+            api_hash=API_HASH,
+            session_string=self.SESSION,
+            plugins={"root": "user"}
+        )
     async def start(self):
         temp.START_TIME = time.time()
         b_users, b_chats = await db.get_banned()
+        self.SESSION = await db.get_user_session()
+        if self.SESSION:
+            await self.create_user_clients()
         temp.BANNED_USERS = b_users
         temp.BANNED_CHATS = b_chats
         client = MongoClient(DATABASE_URL, server_api=ServerApi('1'))
@@ -47,71 +59,56 @@ class Bot(Client):
         except Exception as e:
             print("Something Went Wrong While Connecting To Database!", e)
             exit()
-        await super().start()
+        await self._bot.start()
         if os.path.exists('restart.txt'):
             with open("restart.txt") as file:
                 chat_id, msg_id = map(int, file)
             try:
-                await self.edit_message_text(chat_id=chat_id, message_id=msg_id, text='Restarted Successfully!')
+                await self._bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text='Restarted Successfully!')
             except:
                 pass
             os.remove('restart.txt')
-        temp.BOT = self
+        temp.BOT = self._bot
         await Media.ensure_indexes()
-        me = await self.get_me()
+        me = await self._bot.get_me()
         temp.ME = me.id
         temp.U_NAME = me.username
         temp.B_NAME = me.first_name
         username = '@' + me.username
-        print(f"{me.first_name} is started now 🤗")
-        #groups = await db.get_all_chats_count()
-        #for grp in groups:
-            #await save_group_settings(grp['id'], 'fsub', "")
+        print(f"{me.first_name} - {username} is started now 🤗")
         app = web.AppRunner(web_app)
         await app.setup()
         await web.TCPSite(app, "0.0.0.0", PORT).start()
         try:
-            await self.send_message(chat_id=LOG_CHANNEL, text=f"<b>{me.mention} Restarted! 🤖</b>")
+            await self._bot.send_message(chat_id=LOG_CHANNEL, text=f"<b>{me.mention} Restarted! 🤖</b>")
         except:
             print("Error - Make sure bot admin in LOG_CHANNEL, exiting now")
             exit()
+        if hasattr(self, '_user') and self._user:
+            try:
+                await self._user.start()
+                self._user_data = await self._user.get_me()
+                self.u_name = self._user_data.first_name
+                self.u_username = f"@{self._user_data.username}" if self._user_data.username else ''
+                print(f"{self.u_name} - {self.u_username} is started now 🤗")
+            except Exception as e:
+                await self._bot.send_message(LOG_CHANNEL,text=f"Error while validating user session: {e}")
         try:
-            m = await self.send_message(chat_id=BIN_CHANNEL, text="Test")
+            m = await self._bot.send_message(chat_id=BIN_CHANNEL, text="Test")
             await m.delete()
         except:
             print("Error - Make sure bot admin in BIN_CHANNEL, exiting now")
             exit()
         for admin in ADMINS:
-            await self.send_message(chat_id=admin, text="<b>✅ ʙᴏᴛ ʀᴇsᴛᴀʀᴛᴇᴅ</b>")
+            await self._bot.send_message(chat_id=admin, text="<b>✅ ʙᴏᴛ ʀᴇsᴛᴀʀᴛᴇᴅ</b>")
 
     async def stop(self, *args):
-        await super().stop()
+        await self._bot.stop()
+        if hasattr(self, '_user') and self._user:await self._user.stop()
+        clear_terminal()
         print("Bot Stopped! Bye...")
 
     async def iter_messages(self: Client, chat_id: Union[int, str], limit: int, offset: int = 0) -> Optional[AsyncGenerator["types.Message", None]]:
-        """Iterate through a chat sequentially.
-        This convenience method does the same as repeatedly calling :meth:`~pyrogram.Client.get_messages` in a loop, thus saving
-        you from the hassle of setting up boilerplate code. It is useful for getting the whole chat messages with a
-        single call.
-        Parameters:
-            chat_id (``int`` | ``str``):
-                Unique identifier (int) or username (str) of the target chat.
-                For your personal cloud (Saved Messages) you can simply use "me" or "self".
-                For a contact that exists in your Telegram address book you can use his phone number (str).
-                
-            limit (``int``):
-                Identifier of the last message to be returned.
-                
-            offset (``int``, *optional*):
-                Identifier of the first message to be returned.
-                Defaults to 0.
-        Returns:
-            ``Generator``: A generator yielding :obj:`~pyrogram.types.Message` objects.
-        Example:
-            .. code-block:: python
-                async for message in app.iter_messages("pyrogram", 1000, 100):
-                    print(message.text)
-        """
         current = offset
         while True:
             new_diff = min(200, limit - current)
@@ -131,4 +128,3 @@ except FloodWait as vp:
     asyncio.sleep(vp.value)
     print("Now Ready For Deploying !")
     app.run()
-
