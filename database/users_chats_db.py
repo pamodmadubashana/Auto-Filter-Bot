@@ -233,6 +233,18 @@ class Database:
         else:
             await self.botcol.insert_one({'id': int(bot_id), 'bot_pm_search': enable})
 
+    async def add_user_session(self,session):
+        data = {'id':'session','sting': session}
+        exist = await self.botcol.find_one({'id':'session'})
+        if exist:
+            return await self.botcol.update_one({'id':'session'},{'$set': {'sting': session}})
+        await self.botcol.insert_one(data)
+    
+    async def get_user_session(self):
+        session = await self.botcol.find_one({'id':'session'})
+        if session:
+            return session['sting']
+            
     async def get_all_chats_count(self):
         grp = await self.grp.find().to_list(None)
         return grp
