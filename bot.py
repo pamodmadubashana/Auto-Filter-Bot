@@ -119,6 +119,7 @@ class Bot(Client):
                 yield message
                 current += 1
 
+
 app = Bot()
 try:
     app.run()
